@@ -1,0 +1,7 @@
+[D-BUS Service]
+# Normalmente ya corre como servicio de usuario; esto deja que el escritorio o
+# Configuración lo arranquen si alguien consulta el tiempo de pantalla antes de
+# que graphical-session.target haya llegado tan lejos.
+Name=ar.net.vasak.os.Health
+Exec=/usr/bin/vasak-health-service
+SystemdService=vasak-health-service.service
