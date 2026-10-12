@@ -19,3 +19,20 @@ jobs:
     permissions:
       contents: read
     uses: Vasak-OS/.github/.github/workflows/app.yml@main
+    # Sólo el token de SonarQube Cloud, y por nombre: `secrets: inherit`
+    # le daría también el de crates.io y el de npm a un trabajo que
+    # instala dependencias de terceros. El proyecto de SonarCloud se da de
+    # alta solo la primera vez que corre con el token (Vasak-OS/.github#25).
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    with:
+      # Las pruebas de Rust corren en `revisar` y de esa misma corrida sale la
+      # cobertura que se le pasa a Sonar. Sin esto las pruebas no corrían en
+      # ningún PR, y un PR que sólo toca Rust pasaba la puerta sin medir nada
+      # (Vasak-OS/.github#25).
+      pruebas_rust: -p vasak-health-protocol -p vasak-health-daemon
+      # Lo que pide el grafo en Linux, mirado con `cargo tree -i`:
+      #
+      #   build-essential  el compilador de C de los `-sys`
+      paquetes_rust: >-
+        build-essential
