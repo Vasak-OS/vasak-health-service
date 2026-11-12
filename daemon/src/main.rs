@@ -21,11 +21,13 @@
 mod category;
 mod config;
 mod recorder;
+mod reminders;
 mod service;
 mod store;
 mod tracker;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::interval;
@@ -58,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recorder = Arc::new(Recorder::new(store, config::read_enabled()));
 
-    let _connection = connection::Builder::session()?
+    let connection = connection::Builder::session()?
         .name(SERVICE_NAME)?
         .serve_at(
             SERVICE_PATH,
@@ -74,12 +76,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // muestra: si el escritorio deja de empujar muestras, lo último contado se
     // guarda igual.
     let mut saver = interval(SAVE_EVERY);
+
+    // Los recordatorios de pausa (vasak-health-service#4): cada minuto se suma al
+    // acumulado si la persona está activa, y al llegar al intervalo configurado
+    // se avisa. La configuración se relee en cada vuelta, que es barato una vez
+    // por minuto y evita un método de D-Bus nuevo sólo para enterarse del cambio.
+    const REMINDER_STEP: Duration = Duration::from_secs(60);
+    let mut reminder_tick = interval(REMINDER_STEP);
+    // La primera vuelta de un `interval` de tokio es inmediata: se descarta para
+    // no sumar un minuto que no pasó.
+    reminder_tick.tick().await;
+    let mut breaks = reminders::BreakReminder::default();
+
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
     loop {
         tokio::select! {
             _ = saver.tick() => recorder.save_finalized(),
+            _ = reminder_tick.tick() => {
+                let config = reminders::read_break_reminders();
+                if breaks.due(&config, recorder.is_active(), REMINDER_STEP) {
+                    reminders::notify_break(&connection).await;
+                }
+            }
             _ = sigterm.recv() => break,
             _ = sigint.recv() => break,
         }
