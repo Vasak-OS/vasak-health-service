@@ -42,6 +42,11 @@ pub struct Recorder {
     /// falló, se reintenta en la próxima vuelta).
     unsaved: Mutex<Usage>,
     enabled: AtomicBool,
+    /// Si la pantalla está bloqueada y si hay inactividad, para los
+    /// recordatorios de pausa: sólo cuentan el tiempo *activo*. Se siguen aparte
+    /// del registro de tiempo porque los recordatorios son su propio opt-in.
+    locked: AtomicBool,
+    idle: AtomicBool,
     /// Lo toman de punta a punta guardar y borrar: entre que el tracker entrega
     /// lo contado y eso llega al disco, un «Borrar historial» no puede meterse
     /// en el medio.
@@ -57,6 +62,8 @@ impl Recorder {
             store,
             unsaved: Mutex::new(Usage::new()),
             enabled: AtomicBool::new(enabled),
+            locked: AtomicBool::new(false),
+            idle: AtomicBool::new(false),
             io: Mutex::new(()),
             categories: Categories::new(),
             last_save: Mutex::new(Instant::now()),
@@ -66,6 +73,7 @@ impl Recorder {
     /// Una muestra del escritorio: ésta es la aplicación enfocada (o `None`) y
     /// así está el bloqueo. Apagado, no cuenta nada.
     pub fn on_sample(&self, app: Option<&str>, locked: bool) {
+        self.locked.store(locked, Ordering::SeqCst);
         if self.enabled.load(Ordering::SeqCst) {
             self.tracker.lock().tick(Utc::now(), app, locked);
         }
@@ -74,6 +82,7 @@ impl Recorder {
 
     /// Empezó la inactividad; la persona dejó de tocar hace `idle_ms`.
     pub fn on_idle_started(&self, idle_ms: u64) {
+        self.idle.store(true, Ordering::SeqCst);
         let now = Utc::now();
         let since = now - ChronoDuration::milliseconds(idle_ms as i64);
         self.tracker.lock().idle_started(now, since);
@@ -81,6 +90,7 @@ impl Recorder {
 
     /// Volvió la actividad.
     pub fn on_idle_ended(&self) {
+        self.idle.store(false, Ordering::SeqCst);
         self.tracker.lock().idle_ended();
     }
 
@@ -90,6 +100,7 @@ impl Recorder {
         tracing::warn!(
             "sin detección de inactividad: se deja de contar para no sumar tiempo sin nadie adelante"
         );
+        self.idle.store(true, Ordering::SeqCst);
         let now = Utc::now();
         self.tracker.lock().idle_started(now, now);
     }
@@ -175,6 +186,13 @@ impl Recorder {
 
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::SeqCst)
+    }
+
+    /// Si la persona está activa ahora: la pantalla desbloqueada y sin
+    /// inactividad. Lo miran los recordatorios de pausa, que sólo cuentan el
+    /// tiempo activo.
+    pub fn is_active(&self) -> bool {
+        !self.locked.load(Ordering::SeqCst) && !self.idle.load(Ordering::SeqCst)
     }
 
     /// El informe de `from` a `to` para quien lo consulte: los días con algo, el
@@ -354,5 +372,19 @@ mod tests {
         recorder.clear().expect("se borra");
         assert!(recorder.usage(yesterday, today).is_empty());
         assert_eq!(std::fs::read_dir(&temp.0).expect("se lista").count(), 0);
+    }
+
+    #[test]
+    fn esta_activo_sólo_con_pantalla_desbloqueada_y_sin_inactividad() {
+        let temp = TempDir::new("activo");
+        let recorder = Recorder::new(Some(Store::new(temp.0.clone())), true);
+        recorder.on_sample(Some("x"), true);
+        assert!(!recorder.is_active());
+        recorder.on_sample(Some("x"), false);
+        assert!(recorder.is_active());
+        recorder.on_idle_started(5_000);
+        assert!(!recorder.is_active());
+        recorder.on_idle_ended();
+        assert!(recorder.is_active());
     }
 }

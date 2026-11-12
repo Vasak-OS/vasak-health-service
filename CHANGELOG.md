@@ -2,6 +2,18 @@
 
 Todas las novedades de este repositorio, por paquete.
 
+## vasak-health-service 0.2.0
+
+Recordatorios de pausa, apagados por omisión (vasak-health-service#4).
+
+- **`daemon`** — con `break_reminders.enabled` en `vasak.conf`, el servicio avisa
+  de hacer una pausa cada tanto tiempo *activo* de pantalla (desbloqueada y sin
+  inactividad); el intervalo sale de `break_reminders.every_minutes`, 50 por
+  omisión. El aviso va por `org.freedesktop.Notifications`, sin ventana propia.
+  Queda para después: distinguir agua de pausa, la franja horaria, y respetar
+  «no molestar» / pantalla completa / modo juego —eso necesita que el escritorio
+  le empuje esos estados, que hoy no le llegan—.
+
 ## vasak-health-service 0.1.0
 
 Primera versión. El servicio de salud de VasakOS, con su primera medida: el
