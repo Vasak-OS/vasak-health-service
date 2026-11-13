@@ -204,7 +204,37 @@ impl BreakReminder {
 /// Manda el aviso de pausa por `org.freedesktop.Notifications`. Si no hay un
 /// servicio de notificaciones, se registra y se sigue: un recordatorio que no se
 /// pudo mostrar no tiene que voltear el demonio.
-pub async fn notify_break(connection: &zbus::Connection) {
+/// El texto de un aviso: ícono del tema, título y cuerpo. Es puro para fijar en
+/// una prueba qué dice cada recordatorio sin levantar un bus.
+pub struct Notification {
+    pub icon: &'static str,
+    pub summary: &'static str,
+    pub body: &'static str,
+}
+
+/// El aviso de pausa.
+pub fn break_notification() -> Notification {
+    Notification {
+        icon: "appointment-soon",
+        summary: "Hora de una pausa",
+        body: "Estirá un poco, tomá agua y descansá la vista de la pantalla.",
+    }
+}
+
+/// El aviso de hidratación. Ícono de gotas (freedesktop `weather-showers`); si el
+/// tema no lo trae, el aviso se muestra igual sin ícono.
+pub fn hydration_notification() -> Notification {
+    Notification {
+        icon: "weather-showers",
+        summary: "Hora de tomar agua",
+        body: "Tomá un vaso de agua para mantenerte hidratado.",
+    }
+}
+
+/// Manda un aviso por `org.freedesktop.Notifications`. Si no hay un servicio de
+/// notificaciones, se registra y se sigue: un recordatorio que no se pudo mostrar
+/// no tiene que voltear el demonio.
+async fn notify(connection: &zbus::Connection, n: Notification) {
     // Notify(app_name, replaces_id, app_icon, summary, body, actions, hints,
     // expire_timeout): sin acciones ni pistas, y expiración en -1 que la decide
     // el servicio. Se llama el método crudo para no armar un proxy de un solo uso.
@@ -218,9 +248,9 @@ pub async fn notify_break(connection: &zbus::Connection) {
             &(
                 "VasakOS",
                 0u32,
-                "appointment-soon",
-                "Hora de una pausa",
-                "Estirá un poco, tomá agua y descansá la vista de la pantalla.",
+                n.icon,
+                n.summary,
+                n.body,
                 Vec::<&str>::new(),
                 hints,
                 -1i32,
@@ -232,34 +262,15 @@ pub async fn notify_break(connection: &zbus::Connection) {
     }
 }
 
+pub async fn notify_break(connection: &zbus::Connection) {
+    notify(connection, break_notification()).await
+}
+
 /// Manda el aviso de hidratación por `org.freedesktop.Notifications`, igual que
 /// [`notify_break`]: si no hay un servicio de notificaciones, se registra y se
 /// sigue.
 pub async fn notify_hydration(connection: &zbus::Connection) {
-    let hints: HashMap<&str, zbus::zvariant::Value> = HashMap::new();
-    let aviso = connection
-        .call_method(
-            Some("org.freedesktop.Notifications"),
-            "/org/freedesktop/Notifications",
-            Some("org.freedesktop.Notifications"),
-            "Notify",
-            &(
-                "VasakOS",
-                0u32,
-                // Gotas de agua: ícono estándar del tema (freedesktop); si el tema
-                // no lo trae, el aviso se muestra igual sin ícono.
-                "weather-showers",
-                "Hora de tomar agua",
-                "Tomá un vaso de agua para mantenerte hidratado.",
-                Vec::<&str>::new(),
-                hints,
-                -1i32,
-            ),
-        )
-        .await;
-    if let Err(error) = aviso {
-        tracing::warn!("no se pudo mostrar el recordatorio de hidratación: {error}");
-    }
+    notify(connection, hydration_notification()).await
 }
 
 #[cfg(test)]
@@ -267,6 +278,22 @@ mod tests {
     use super::*;
 
     const MIN: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn cada_aviso_tiene_su_texto_y_su_icono() {
+        let pausa = break_notification();
+        assert_eq!(pausa.icon, "appointment-soon");
+        assert_eq!(pausa.summary, "Hora de una pausa");
+        assert!(pausa.body.contains("pantalla"));
+
+        let agua = hydration_notification();
+        assert_eq!(agua.icon, "weather-showers");
+        assert_eq!(agua.summary, "Hora de tomar agua");
+        assert!(agua.body.contains("agua"));
+
+        // Son avisos distintos: no se confunde uno con el otro.
+        assert_ne!(pausa.summary, agua.summary);
+    }
 
     #[test]
     fn sin_configuracion_los_recordatorios_quedan_apagados() {
