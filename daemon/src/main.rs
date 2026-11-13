@@ -29,6 +29,7 @@ mod tracker;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Timelike;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::interval;
 use tracing::{error, info, warn};
@@ -77,16 +78,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // guarda igual.
     let mut saver = interval(SAVE_EVERY);
 
-    // Los recordatorios de pausa (vasak-health-service#4): cada minuto se suma al
-    // acumulado si la persona está activa, y al llegar al intervalo configurado
-    // se avisa. La configuración se relee en cada vuelta, que es barato una vez
-    // por minuto y evita un método de D-Bus nuevo sólo para enterarse del cambio.
+    // Los recordatorios de pausa e hidratación (vasak-health-service#4): cada
+    // minuto se suma al acumulado de cada tipo si la persona está activa, y al
+    // llegar al intervalo configurado se avisa, siempre que la hora caiga dentro
+    // de la franja horaria. La configuración se relee en cada vuelta, que es
+    // barato una vez por minuto y evita un método de D-Bus nuevo sólo para
+    // enterarse del cambio.
     const REMINDER_STEP: Duration = Duration::from_secs(60);
     let mut reminder_tick = interval(REMINDER_STEP);
     // La primera vuelta de un `interval` de tokio es inmediata: se descarta para
     // no sumar un minuto que no pasó.
     reminder_tick.tick().await;
     let mut breaks = reminders::BreakReminder::default();
+    let mut hydration = reminders::BreakReminder::default();
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
@@ -95,9 +99,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             _ = saver.tick() => recorder.save_finalized(),
             _ = reminder_tick.tick() => {
-                let config = reminders::read_break_reminders();
-                if breaks.due(&config, recorder.is_active(), REMINDER_STEP) {
+                // La hora local y la franja gobiernan los dos tipos por igual. Se
+                // consulta `due()` siempre (acumula y reinicia el contador aunque
+                // estemos fuera de la franja) y recién después se filtra por la
+                // franja: un aviso que cae fuera de hora se descarta, no se corre.
+                let hour = chrono::Local::now().hour();
+                let window = reminders::read_reminder_window();
+                let in_window = reminders::within_window(hour, &window);
+                let active = recorder.is_active();
+
+                let break_config = reminders::read_break_reminders();
+                if breaks.due(&break_config, active, REMINDER_STEP) && in_window {
                     reminders::notify_break(&connection).await;
+                }
+
+                let hydration_config = reminders::read_hydration_reminders();
+                if hydration.due(&hydration_config, active, REMINDER_STEP) && in_window {
+                    reminders::notify_hydration(&connection).await;
                 }
             }
             _ = sigterm.recv() => break,
