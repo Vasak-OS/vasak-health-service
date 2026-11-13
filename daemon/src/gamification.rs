@@ -21,6 +21,7 @@ use std::path::Path;
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use vasak_health_protocol::GamificationProgress;
 
 use crate::config;
 use crate::store::write_atomically;
@@ -85,6 +86,21 @@ pub struct Progress {
     pub achievements: Vec<String>,
     /// `kind`s ya vistos, para el logro de «primer evento de cada tipo».
     pub seen_kinds: BTreeSet<String>,
+}
+
+impl Progress {
+    /// Arma el informe que viaja por D-Bus: XP, racha y logros, con el
+    /// interruptor `enabled` que decide quien consulta. Los campos de
+    /// contabilidad interna (`last_active_day`, `seen_kinds`) no salen: a quien
+    /// muestra el progreso no le sirven.
+    pub fn report(&self, enabled: bool) -> GamificationProgress {
+        GamificationProgress {
+            enabled,
+            xp: self.xp,
+            streak_days: self.streak_days,
+            achievements: self.achievements.clone(),
+        }
+    }
 }
 
 /// El corazón, puro: aplica `event` a `progress` con `today` como el día actual.
@@ -339,5 +355,37 @@ mod tests {
 
         std::fs::write(temp.0.join(STATE_FILE), "esto no es json").expect("se escribe");
         assert_eq!(load(&temp.0), Progress::default());
+    }
+
+    fn progreso_con_datos() -> Progress {
+        Progress {
+            xp: 120,
+            streak_days: 4,
+            last_active_day: Some(day(5)),
+            achievements: vec!["primer_aviso".to_string(), "racha_3".to_string()],
+            seen_kinds: ["reminder".to_string()].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn el_informe_copia_xp_racha_y_logros_tal_cual() {
+        let informe = progreso_con_datos().report(true);
+        assert_eq!(informe.xp, 120);
+        assert_eq!(informe.streak_days, 4);
+        assert_eq!(informe.achievements, vec!["primer_aviso", "racha_3"]);
+    }
+
+    #[test]
+    fn el_interruptor_del_informe_sale_del_parametro_y_no_del_contenido() {
+        let apagado = progreso_con_datos().report(false);
+        assert!(!apagado.enabled);
+        assert_eq!(apagado.xp, 120);
+        assert_eq!(apagado.streak_days, 4);
+
+        let prendido_vacio = Progress::default().report(true);
+        assert!(prendido_vacio.enabled);
+        assert_eq!(prendido_vacio.xp, 0);
+        assert_eq!(prendido_vacio.streak_days, 0);
+        assert!(prendido_vacio.achievements.is_empty());
     }
 }

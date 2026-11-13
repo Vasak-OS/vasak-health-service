@@ -2,6 +2,18 @@
 
 Todas las novedades de este repositorio, por paquete.
 
+## vasak-health-service 0.5.0
+
+El progreso de gamificación ahora se puede consultar por D-Bus
+(vasak-health-service#5).
+
+- **`protocol`** — tipo `GamificationProgress` (enabled, XP, racha, logros) y
+  método `Gamification` en la interfaz.
+- **`daemon`** — el servicio responde el progreso leyéndolo del disco en cada
+  consulta (el bucle lo guarda de forma atómica tras cada evento, así que está
+  al día). Apagada la capa, responde en cero sin leer nada. Queda para después
+  la interfaz en Configuración que lo muestre.
+
 ## vasak-health-service 0.4.0
 
 Capa de logros y rachas opcional (vasak-health-service#5).

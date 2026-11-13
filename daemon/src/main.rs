@@ -63,12 +63,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recorder = Arc::new(Recorder::new(store, config::read_enabled()));
 
+    // La gamificación (vasak-health-service#5): el interruptor y la carpeta del
+    // progreso se leen una sola vez al arrancar. El servicio los necesita para
+    // responder la consulta de progreso por D-Bus, y el bucle de abajo para
+    // emitir y guardar; por eso se calculan acá y el dir se clona.
+    let gamification_on = gamification::read_gamification_config().enabled;
+    let gamification_dir = gamification::default_dir();
+
     let connection = connection::Builder::session()?
         .name(SERVICE_NAME)?
         .serve_at(
             SERVICE_PATH,
             HealthService {
                 recorder: recorder.clone(),
+                gamification_enabled: gamification_on,
+                gamification_dir: gamification_dir.clone(),
             },
         )?
         .build()
@@ -97,11 +106,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // La gamificación (vasak-health-service#5): apagada por omisión. Prendida,
     // se carga el progreso al arrancar y cada recordatorio que efectivamente
     // avisa emite un evento que suma XP, rachas y logros. Apagada no se carga,
-    // no se emite y no se guarda nada. El interruptor se lee una sola vez al
-    // arrancar: no hay forma hoy de pedir reinicio del servicio para releerlo,
-    // y a diferencia de los recordatorios no cambia de minuto a minuto.
-    let gamification_on = gamification::read_gamification_config().enabled;
-    let gamification_dir = gamification::default_dir();
+    // no se emite y no se guarda nada. El interruptor y la carpeta ya se leyeron
+    // arriba (los comparte con el servicio, que responde la consulta por D-Bus);
+    // se leen una sola vez al arrancar, y a diferencia de los recordatorios no
+    // cambian de minuto a minuto.
     let mut progress = if gamification_on {
         gamification_dir
             .as_deref()
