@@ -20,21 +20,20 @@
 
 mod category;
 mod config;
-mod gamification;
 mod recorder;
 mod reminders;
 mod service;
 mod store;
 mod tracker;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Timelike;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
+use vasak_gamification_protocol::GamificationProxy;
 use zbus::connection;
 
 use recorder::{Recorder, SAVE_EVERY};
@@ -63,12 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recorder = Arc::new(Recorder::new(store, config::read_enabled()));
 
-    // La gamificación (vasak-health-service#5): el interruptor y la carpeta del
-    // progreso se leen una sola vez al arrancar. El servicio los necesita para
-    // responder la consulta de progreso por D-Bus, y el bucle de abajo para
-    // emitir y guardar; por eso se calculan acá y el dir se clona.
-    let gamification_on = gamification::read_gamification_config().enabled;
-    let gamification_dir = gamification::default_dir();
+    // La gamificación (vasak-health-service#5) ya no vive acá: su motor es ahora
+    // el servicio `vasak-gamification`. health sólo le emite eventos. El
+    // interruptor de `vasak.conf` se mantiene para no despertar al servicio por
+    // D-Bus cuando la persona tiene la capa apagada.
+    let gamification_on = config::read_gamification_enabled();
 
     let connection = connection::Builder::session()?
         .name(SERVICE_NAME)?
@@ -76,13 +74,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SERVICE_PATH,
             HealthService {
                 recorder: recorder.clone(),
-                gamification_enabled: gamification_on,
-                gamification_dir: gamification_dir.clone(),
             },
         )?
         .build()
         .await?;
     info!("servicio en {SERVICE_NAME}");
+
+    // El proxy al servicio de gamificación, sobre la misma conexión de sesión.
+    // Sólo si la capa está prendida: apagada, no se construye y no se emite nada.
+    // Construirlo no exige que el servicio esté corriendo —es perezoso—; si aun
+    // así fallara, se degrada a `None` y los recordatorios siguen sin gamificar.
+    let gamification = if gamification_on {
+        GamificationProxy::new(&connection)
+            .await
+            .inspect_err(|error| debug!("no se pudo preparar la gamificación: {error}"))
+            .ok()
+    } else {
+        None
+    };
 
     // Guardar cada tanto es una red de seguridad además de lo que dispara cada
     // muestra: si el escritorio deja de empujar muestras, lo último contado se
@@ -103,22 +112,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut breaks = reminders::BreakReminder::default();
     let mut hydration = reminders::BreakReminder::default();
 
-    // La gamificación (vasak-health-service#5): apagada por omisión. Prendida,
-    // se carga el progreso al arrancar y cada recordatorio que efectivamente
-    // avisa emite un evento que suma XP, rachas y logros. Apagada no se carga,
-    // no se emite y no se guarda nada. El interruptor y la carpeta ya se leyeron
-    // arriba (los comparte con el servicio, que responde la consulta por D-Bus);
-    // se leen una sola vez al arrancar, y a diferencia de los recordatorios no
-    // cambian de minuto a minuto.
-    let mut progress = if gamification_on {
-        gamification_dir
-            .as_deref()
-            .map(gamification::load)
-            .unwrap_or_default()
-    } else {
-        gamification::Progress::default()
-    };
-
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
@@ -136,15 +129,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let active = recorder.is_active();
 
                 let break_config = reminders::read_break_reminders();
-                if breaks.due(&break_config, active, REMINDER_STEP) && in_window {
+                let break_fires = breaks.due(&break_config, active, REMINDER_STEP) && in_window;
+                if break_fires {
                     reminders::notify_break(&connection).await;
-                    award_reminder(gamification_on, &mut progress, &gamification_dir, "break");
                 }
 
                 let hydration_config = reminders::read_hydration_reminders();
-                if hydration.due(&hydration_config, active, REMINDER_STEP) && in_window {
+                let hydration_fires =
+                    hydration.due(&hydration_config, active, REMINDER_STEP) && in_window;
+                if hydration_fires {
                     reminders::notify_hydration(&connection).await;
-                    award_reminder(gamification_on, &mut progress, &gamification_dir, "hydration");
+                }
+
+                for kind in reminder_events(gamification_on, break_fires, hydration_fires) {
+                    emit_gamification(gamification.as_ref(), kind).await;
                 }
             }
             _ = sigterm.recv() => break,
@@ -176,32 +174,75 @@ fn import_legacy_if_empty(store: &Store) {
     }
 }
 
-/// Puntos que suma cada recordatorio que avisa. Default abierto.
-const REMINDER_POINTS: u32 = 10;
-
-/// Puntúa un recordatorio que acaba de avisar y guarda el progreso. Apagada la
-/// gamificación, no hace nada.
+/// Los `kind`s de gamificación que se emiten en una vuelta, en orden. Puro:
+/// separa *qué* se emite (probable sin bus) de la emisión en sí ([`emit_gamification`],
+/// fire-and-forget), igual que `reminders::break_notification` separa el texto
+/// del envío. Apagada la capa, no se emite nada: así no se despierta al servicio
+/// de gamificación por D-Bus.
 ///
 /// Limitación honesta: el evento es «el recordatorio avisó estando la persona
 /// activa», no «la persona confirmó que tomó agua / hizo la pausa» —confirmar
-/// necesitaría feedback de la UI, que hoy no existe—.
-fn award_reminder(
-    enabled: bool,
-    progress: &mut gamification::Progress,
-    dir: &Option<PathBuf>,
-    kind: &str,
-) {
+/// necesitaría feedback de la UI, que hoy no existe—. El servicio decide los
+/// puntos de cada `kind`; el emisor sólo manda el `kind`.
+fn reminder_events(enabled: bool, break_fires: bool, hydration_fires: bool) -> Vec<&'static str> {
     if !enabled {
-        return;
+        return Vec::new();
     }
-    let event = gamification::Event {
-        kind: kind.to_string(),
-        points: REMINDER_POINTS,
-    };
-    gamification::award(progress, &event, chrono::Local::now().date_naive());
-    if let Some(dir) = dir {
-        if let Err(error) = gamification::save(dir, progress) {
-            warn!("no se pudo guardar el progreso de gamificación: {error}");
+    let mut kinds = Vec::new();
+    if break_fires {
+        kinds.push("break");
+    }
+    if hydration_fires {
+        kinds.push("hydration");
+    }
+    kinds
+}
+
+/// Emite un evento al servicio de gamificación, fire-and-forget. Sin proxy
+/// —capa apagada, o el servicio no está instalado o está arrancando— no hace
+/// nada: un evento que no se pudo emitir no voltea ni frena el recordatorio.
+async fn emit_gamification(proxy: Option<&GamificationProxy<'_>>, kind: &str) {
+    if let Some(proxy) = proxy {
+        if let Err(error) = proxy.emit(kind).await {
+            debug!("no se pudo emitir el evento de gamificación «{kind}»: {error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn un_recordatorio_de_pausa_emite_break() {
+        assert_eq!(reminder_events(true, true, false), ["break"]);
+    }
+
+    #[test]
+    fn un_recordatorio_de_hidratación_emite_hydration() {
+        assert_eq!(reminder_events(true, false, true), ["hydration"]);
+    }
+
+    #[test]
+    fn si_avisan_los_dos_emite_break_antes_que_hydration() {
+        assert_eq!(reminder_events(true, true, true), ["break", "hydration"]);
+    }
+
+    #[test]
+    fn sin_avisos_no_emite_nada() {
+        assert!(reminder_events(true, false, false).is_empty());
+    }
+
+    #[test]
+    fn con_la_capa_apagada_no_emite_nada_aunque_avisen() {
+        assert!(reminder_events(false, true, true).is_empty());
+        assert!(reminder_events(false, true, false).is_empty());
+        assert!(reminder_events(false, false, true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn sin_el_servicio_emitir_no_entra_en_pánico() {
+        emit_gamification(None, "break").await;
+        emit_gamification(None, "hydration").await;
     }
 }

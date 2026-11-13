@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 vasak-health-protocol.workspace = true
+# El contrato del servicio de gamificación: health dejó de ser dueño del motor
+# y ahora le emite eventos por su proxy de zbus 5 (vasak-health-service#5).
+vasak-gamification-protocol = "0.1.0"
 serde.workspace = true
 serde_json = "1"
 zbus.workspace = true
