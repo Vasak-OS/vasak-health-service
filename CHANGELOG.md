@@ -2,6 +2,18 @@
 
 Todas las novedades de este repositorio, por paquete.
 
+## vasak-health-service 0.4.0
+
+Capa de logros y rachas opcional (vasak-health-service#5).
+
+- **`daemon`** — con `gamification.enabled` en `vasak.conf` (apagada por
+  omisión), el servicio lleva XP, una racha de días y logros a partir de
+  eventos que emiten los módulos; hoy el primer consumidor son los
+  recordatorios de pausa e hidratación, que suman al cumplirse. El estado vive
+  en texto plano junto a los datos de tiempo de pantalla; no son secretos.
+  Queda para después la interfaz de activación y de ver el progreso (en
+  Configuración), y que otros módulos emitan eventos.
+
 ## vasak-health-service 0.3.0
 
 Recordatorios de hidratación y franja horaria (vasak-health-service#4).

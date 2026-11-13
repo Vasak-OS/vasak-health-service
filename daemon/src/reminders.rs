@@ -399,6 +399,11 @@ mod tests {
     #[test]
     fn la_configuracion_se_lee_de_la_ruta_de_vasak_conf() {
         use crate::store::tests::TempDir;
+        // `VASAK_CONFIG_PATH` es del proceso: serializamos con las otras pruebas
+        // que la pisan (ver `config::CONFIG_ENV_LOCK`).
+        let _env = crate::config::CONFIG_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let temp = TempDir::new("recordatorios");
         let file = temp.0.join("vasak.conf");
         std::fs::write(
