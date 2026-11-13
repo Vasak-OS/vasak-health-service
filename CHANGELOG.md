@@ -2,6 +2,19 @@
 
 Todas las novedades de este repositorio, por paquete.
 
+## vasak-health-service 0.3.0
+
+Recordatorios de hidratación y franja horaria (vasak-health-service#4).
+
+- **`daemon`** — además de los de pausa, con `hydration_reminders.enabled` en
+  `vasak.conf` el servicio avisa de tomar agua cada tanto tiempo *activo* de
+  pantalla; el intervalo sale de `hydration_reminders.every_minutes`, 30 por
+  omisión. Y una franja horaria, `reminders_window.from_hour`/`to_hour` (0–24,
+  todo el día si falta; cruza la medianoche cuando `from > to`), deja los avisos
+  —de pausa y de agua— sólo dentro de esas horas. Sigue pendiente respetar «no
+  molestar» / pantalla completa / modo juego, que necesita que el escritorio le
+  empuje esos estados (hoy no le llegan).
+
 ## vasak-health-service 0.2.0
 
 Recordatorios de pausa, apagados por omisión (vasak-health-service#4).
