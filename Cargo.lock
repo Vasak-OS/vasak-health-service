@@ -1056,8 +1056,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
+name = "vasak-gamification-protocol"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80afaf5aee0251cda17c3a33a4b6014231f2cba3ac9cf8f3db32042084309bea"
+dependencies = [
+ "serde",
+ "zbus",
+]
+
+[[package]]
 name = "vasak-health-daemon"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -1068,13 +1078,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "vasak-gamification-protocol",
  "vasak-health-protocol",
  "zbus",
 ]
 
 [[package]]
 name = "vasak-health-protocol"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "zbus",

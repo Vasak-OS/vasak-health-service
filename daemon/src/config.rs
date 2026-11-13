@@ -39,6 +39,29 @@ pub fn read_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// Si la capa de gamificación está prendida, según `gamification.enabled` de
+/// `vasak.conf`. Apagada por omisión: a diferencia del tiempo de pantalla, acá
+/// la falta de la clave —o un archivo ilegible— deja la capa apagada, para no
+/// despertar al servicio de gamificación por D-Bus sin que la persona la prenda.
+pub fn gamification_enabled_from_json(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .as_ref()
+        .and_then(|config| config.get("gamification"))
+        .and_then(|section| section.get("enabled"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Lee `vasak.conf` y dice si la gamificación está prendida; apagada si el
+/// archivo no se puede leer.
+pub fn read_gamification_enabled() -> bool {
+    config_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|content| gamification_enabled_from_json(&content))
+        .unwrap_or(false)
+}
+
 /// Candado para las pruebas que pisan `VASAK_CONFIG_PATH`: la variable es del
 /// proceso entero y las pruebas corren en paralelo, así que las que la tocan
 /// (en este módulo, en `reminders` y en `gamification`) lo toman primero para
@@ -58,5 +81,28 @@ mod tests {
         assert!(enabled_from_json(r#"{"screen_time":{"enabled":"no"}}"#));
         assert!(enabled_from_json(r#"{"screen_time":{"enabled":true}}"#));
         assert!(!enabled_from_json(r#"{"screen_time":{"enabled":false}}"#));
+    }
+
+    #[test]
+    fn la_gamificación_está_apagada_salvo_que_la_configuración_la_prenda() {
+        assert!(!gamification_enabled_from_json(""));
+        assert!(!gamification_enabled_from_json("{}"));
+        assert!(!gamification_enabled_from_json("no es json"));
+        assert!(!gamification_enabled_from_json(
+            r#"{"screen_time":{"enabled":true}}"#
+        ));
+        assert!(!gamification_enabled_from_json(r#"{"gamification":{}}"#));
+        assert!(!gamification_enabled_from_json(
+            r#"{"gamification":{"enabled":"yes"}}"#
+        ));
+        assert!(!gamification_enabled_from_json(
+            r#"{"gamification":{"enabled":1}}"#
+        ));
+        assert!(!gamification_enabled_from_json(
+            r#"{"gamification":{"enabled":false}}"#
+        ));
+        assert!(gamification_enabled_from_json(
+            r#"{"gamification":{"enabled":true}}"#
+        ));
     }
 }

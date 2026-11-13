@@ -74,23 +74,6 @@ pub struct ScreenTimeReport {
     pub days: Vec<DayUsage>,
 }
 
-// ── Gamificación ──────────────────────────────────────────────────────────────
-
-/// El progreso de gamificación (vasak-health-service#5), para que Configuración
-/// lo muestre. Apagada la capa, `enabled` es `false` y el resto viene en cero:
-/// no se cuenta nada hasta que la persona la prenda.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-pub struct GamificationProgress {
-    /// Si la capa está prendida.
-    pub enabled: bool,
-    /// Experiencia total acumulada.
-    pub xp: u64,
-    /// Días seguidos con al menos un evento.
-    pub streak_days: u32,
-    /// Ids de los logros ya desbloqueados.
-    pub achievements: Vec<String>,
-}
-
 // ── El proxy, para quien esté en zbus 5 ───────────────────────────────────────
 
 /// El lado cliente del servicio.
@@ -140,8 +123,4 @@ pub trait Health {
 
     /// Si el registro está prendido.
     fn enabled(&self) -> zbus::Result<bool>;
-
-    /// El progreso de gamificación: XP, racha y logros desbloqueados. Apagada la
-    /// capa, `enabled` es `false` y el resto viene en cero.
-    fn gamification(&self) -> zbus::Result<GamificationProgress>;
 }

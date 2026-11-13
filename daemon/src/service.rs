@@ -7,21 +7,14 @@
 use zbus::fdo::Error as FdoError;
 use zbus::interface;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use vasak_health_protocol::{GamificationProgress, ScreenTimeReport};
+use vasak_health_protocol::ScreenTimeReport;
 
-use crate::gamification;
 use crate::recorder::{parse_range, Recorder};
 
 pub struct HealthService {
     pub recorder: Arc<Recorder>,
-    /// Si la capa de gamificación está prendida. Se lee una vez al arrancar,
-    /// igual que en el bucle: hoy no cambia en caliente.
-    pub gamification_enabled: bool,
-    /// Dónde vive el progreso de gamificación; `None` sin carpeta de datos.
-    pub gamification_dir: Option<PathBuf>,
 }
 
 #[interface(name = "ar.net.vasak.os.Health")]
@@ -75,92 +68,5 @@ impl HealthService {
     /// Si el registro está prendido.
     fn enabled(&self) -> bool {
         self.recorder.is_enabled()
-    }
-
-    /// El progreso de gamificación: XP, racha y logros. Se lee del disco en cada
-    /// consulta —el bucle lo guarda de forma atómica tras cada evento, así que
-    /// está al día— y no se comparte estado con el bucle. Apagada la capa, no se
-    /// lee nada y el informe viene en cero.
-    fn gamification(&self) -> GamificationProgress {
-        let progress = if self.gamification_enabled {
-            self.gamification_dir
-                .as_deref()
-                .map(gamification::load)
-                .unwrap_or_default()
-        } else {
-            gamification::Progress::default()
-        };
-        progress.report(self.gamification_enabled)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::gamification::{self, Progress};
-    use crate::recorder::Recorder;
-    use crate::store::tests::TempDir;
-
-    fn service(enabled: bool, dir: Option<PathBuf>) -> HealthService {
-        HealthService {
-            recorder: Arc::new(Recorder::new(None, false)),
-            gamification_enabled: enabled,
-            gamification_dir: dir,
-        }
-    }
-
-    fn progreso_guardado(dir: &std::path::Path) {
-        let progress = Progress {
-            xp: 250,
-            streak_days: 6,
-            achievements: vec!["racha_3".to_string(), "racha_5".to_string()],
-            ..Progress::default()
-        };
-        gamification::save(dir, &progress).expect("se guarda el progreso");
-    }
-
-    #[test]
-    fn apagada_no_lee_el_disco_y_responde_en_cero() {
-        let temp = TempDir::new("gamif-apagada");
-        progreso_guardado(&temp.0);
-
-        let informe = service(false, Some(temp.0.clone())).gamification();
-
-        assert!(!informe.enabled);
-        assert_eq!(informe.xp, 0);
-        assert_eq!(informe.streak_days, 0);
-        assert!(informe.achievements.is_empty());
-    }
-
-    #[test]
-    fn prendida_devuelve_el_progreso_guardado() {
-        let temp = TempDir::new("gamif-prendida");
-        progreso_guardado(&temp.0);
-
-        let informe = service(true, Some(temp.0.clone())).gamification();
-
-        assert!(informe.enabled);
-        assert_eq!(informe.xp, 250);
-        assert_eq!(informe.streak_days, 6);
-        assert_eq!(informe.achievements, vec!["racha_3", "racha_5"]);
-    }
-
-    #[test]
-    fn prendida_sin_archivo_responde_en_cero() {
-        let temp = TempDir::new("gamif-vacia");
-
-        let informe = service(true, Some(temp.0.clone())).gamification();
-
-        assert!(informe.enabled);
-        assert_eq!(informe.xp, 0);
-        assert!(informe.achievements.is_empty());
-    }
-
-    #[test]
-    fn prendida_sin_carpeta_de_datos_responde_en_cero() {
-        let informe = service(true, None).gamification();
-
-        assert!(informe.enabled);
-        assert_eq!(informe.xp, 0);
     }
 }
