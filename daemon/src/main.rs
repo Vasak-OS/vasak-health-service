@@ -20,12 +20,14 @@
 
 mod category;
 mod config;
+mod gamification;
 mod recorder;
 mod reminders;
 mod service;
 mod store;
 mod tracker;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -92,6 +94,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut breaks = reminders::BreakReminder::default();
     let mut hydration = reminders::BreakReminder::default();
 
+    // La gamificación (vasak-health-service#5): apagada por omisión. Prendida,
+    // se carga el progreso al arrancar y cada recordatorio que efectivamente
+    // avisa emite un evento que suma XP, rachas y logros. Apagada no se carga,
+    // no se emite y no se guarda nada. El interruptor se lee una sola vez al
+    // arrancar: no hay forma hoy de pedir reinicio del servicio para releerlo,
+    // y a diferencia de los recordatorios no cambia de minuto a minuto.
+    let gamification_on = gamification::read_gamification_config().enabled;
+    let gamification_dir = gamification::default_dir();
+    let mut progress = if gamification_on {
+        gamification_dir
+            .as_deref()
+            .map(gamification::load)
+            .unwrap_or_default()
+    } else {
+        gamification::Progress::default()
+    };
+
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
@@ -111,11 +130,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let break_config = reminders::read_break_reminders();
                 if breaks.due(&break_config, active, REMINDER_STEP) && in_window {
                     reminders::notify_break(&connection).await;
+                    award_reminder(gamification_on, &mut progress, &gamification_dir, "break");
                 }
 
                 let hydration_config = reminders::read_hydration_reminders();
                 if hydration.due(&hydration_config, active, REMINDER_STEP) && in_window {
                     reminders::notify_hydration(&connection).await;
+                    award_reminder(gamification_on, &mut progress, &gamification_dir, "hydration");
                 }
             }
             _ = sigterm.recv() => break,
@@ -144,5 +165,35 @@ fn import_legacy_if_empty(store: &Store) {
     match store.import_from(&legacy) {
         Ok(()) => info!("historial de tiempo de pantalla importado desde el escritorio"),
         Err(error) => warn!("no se pudo importar el historial viejo: {error}"),
+    }
+}
+
+/// Puntos que suma cada recordatorio que avisa. Default abierto.
+const REMINDER_POINTS: u32 = 10;
+
+/// Puntúa un recordatorio que acaba de avisar y guarda el progreso. Apagada la
+/// gamificación, no hace nada.
+///
+/// Limitación honesta: el evento es «el recordatorio avisó estando la persona
+/// activa», no «la persona confirmó que tomó agua / hizo la pausa» —confirmar
+/// necesitaría feedback de la UI, que hoy no existe—.
+fn award_reminder(
+    enabled: bool,
+    progress: &mut gamification::Progress,
+    dir: &Option<PathBuf>,
+    kind: &str,
+) {
+    if !enabled {
+        return;
+    }
+    let event = gamification::Event {
+        kind: kind.to_string(),
+        points: REMINDER_POINTS,
+    };
+    gamification::award(progress, &event, chrono::Local::now().date_naive());
+    if let Some(dir) = dir {
+        if let Err(error) = gamification::save(dir, progress) {
+            warn!("no se pudo guardar el progreso de gamificación: {error}");
+        }
     }
 }

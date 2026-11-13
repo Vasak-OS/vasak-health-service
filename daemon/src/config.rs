@@ -39,6 +39,13 @@ pub fn read_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// Candado para las pruebas que pisan `VASAK_CONFIG_PATH`: la variable es del
+/// proceso entero y las pruebas corren en paralelo, así que las que la tocan
+/// (en este módulo, en `reminders` y en `gamification`) lo toman primero para
+/// no leerse el archivo equivocado entre sí.
+#[cfg(test)]
+pub(crate) static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
