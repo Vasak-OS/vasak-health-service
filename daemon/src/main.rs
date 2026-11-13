@@ -64,9 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // La gamificación (vasak-health-service#5) ya no vive acá: su motor es ahora
     // el servicio `vasak-gamification`. health sólo le emite eventos. El
-    // interruptor de `vasak.conf` se mantiene para no despertar al servicio por
-    // D-Bus cuando la persona tiene la capa apagada.
-    let gamification_on = config::read_gamification_enabled();
+    // interruptor de `vasak.conf` se relee por tick (más abajo) para que prenderla
+    // o apagarla desde Configuración haga efecto sin reiniciar; apagada, no se
+    // emite nada y no se despierta al servicio por D-Bus.
 
     let connection = connection::Builder::session()?
         .name(SERVICE_NAME)?
@@ -80,18 +80,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     info!("servicio en {SERVICE_NAME}");
 
-    // El proxy al servicio de gamificación, sobre la misma conexión de sesión.
-    // Sólo si la capa está prendida: apagada, no se construye y no se emite nada.
-    // Construirlo no exige que el servicio esté corriendo —es perezoso—; si aun
-    // así fallara, se degrada a `None` y los recordatorios siguen sin gamificar.
-    let gamification = if gamification_on {
-        GamificationProxy::new(&connection)
-            .await
-            .inspect_err(|error| debug!("no se pudo preparar la gamificación: {error}"))
-            .ok()
-    } else {
-        None
-    };
+    // El proxy al servicio de gamificación, sobre la misma conexión de sesión. Se
+    // arma siempre, aunque la capa arranque apagada, para que esté listo si se
+    // prende en caliente. Construirlo no exige que el servicio esté corriendo —es
+    // perezoso—; si aun así fallara, se degrada a `None` y los recordatorios
+    // siguen sin gamificar.
+    let gamification = GamificationProxy::new(&connection)
+        .await
+        .inspect_err(|error| debug!("no se pudo preparar la gamificación: {error}"))
+        .ok();
 
     // Guardar cada tanto es una red de seguridad además de lo que dispara cada
     // muestra: si el escritorio deja de empujar muestras, lo último contado se
@@ -141,6 +138,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reminders::notify_hydration(&connection).await;
                 }
 
+                // La capa se relee por tick —barato, como los configs de arriba—
+                // para que un toggle desde Configuración haga efecto sin reiniciar.
+                let gamification_on = config::read_gamification_enabled();
                 for kind in reminder_events(gamification_on, break_fires, hydration_fires) {
                     emit_gamification(gamification.as_ref(), kind).await;
                 }

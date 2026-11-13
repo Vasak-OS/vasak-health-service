@@ -2,6 +2,17 @@
 
 Todas las novedades de este repositorio, por paquete.
 
+## vasak-health-service 0.7.0
+
+Prender o apagar la gamificación desde Configuración ahora hace efecto sin
+reiniciar el servicio (vasak-health-service#5).
+
+- **`daemon`** — el interruptor `gamification.enabled` se relee en cada vuelta
+  de los recordatorios (un minuto), igual que el resto de su configuración, en
+  vez de leerse una sola vez al arrancar. El proxy al servicio de gamificación
+  se arma siempre, así queda listo si la capa se prende en caliente. Apagada, no
+  se emite nada y no se despierta al servicio.
+
 ## vasak-health-service 0.5.0
 
 El progreso de gamificación ahora se puede consultar por D-Bus
