@@ -105,4 +105,24 @@ mod tests {
             r#"{"gamification":{"enabled":true}}"#
         ));
     }
+
+    #[test]
+    fn la_gamificación_se_lee_de_la_ruta_de_vasak_conf() {
+        use crate::store::tests::TempDir;
+        // `VASAK_CONFIG_PATH` es del proceso: se serializa con las otras pruebas que la pisan.
+        let _env = CONFIG_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let temp = TempDir::new("gamificacion");
+        let file = temp.0.join("vasak.conf");
+        std::fs::write(&file, r#"{"gamification":{"enabled":true}}"#)
+            .expect("se escribe la configuración");
+
+        std::env::set_var("VASAK_CONFIG_PATH", &file);
+        let prendida = read_gamification_enabled();
+        std::env::set_var("VASAK_CONFIG_PATH", temp.0.join("no-existe.conf"));
+        let ausente = read_gamification_enabled();
+        std::env::remove_var("VASAK_CONFIG_PATH");
+
+        assert!(prendida);
+        assert!(!ausente);
+    }
 }

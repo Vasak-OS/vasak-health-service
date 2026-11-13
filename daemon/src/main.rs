@@ -85,13 +85,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Construirlo no exige que el servicio esté corriendo —es perezoso—; si aun
     // así fallara, se degrada a `None` y los recordatorios siguen sin gamificar.
     let gamification = if gamification_on {
-        match GamificationProxy::new(&connection).await {
-            Ok(proxy) => Some(proxy),
-            Err(error) => {
-                debug!("no se pudo preparar la gamificación: {error}");
-                None
-            }
-        }
+        GamificationProxy::new(&connection)
+            .await
+            .inspect_err(|error| debug!("no se pudo preparar la gamificación: {error}"))
+            .ok()
     } else {
         None
     };
